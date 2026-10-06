@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Station Map Viewer</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <link href="https://unpkg.com/maplibre-gl@6/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+    }
+
+    #map {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 100%;
+    }
+
+    .maplibregl-popup-content th {
+      text-align: left;
+      padding-right: 12px;
+    }
+
+    .legend {
+      background: rgba(255, 255, 255, 0.9);
+      padding: 6px 10px;
+      border-radius: 4px;
+      font: 12px/1.4 sans-serif;
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+    }
+
+    .legend-title {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid #222222;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="map"></div>
+  <script type="module">
+    import { Map, NavigationControl, Popup, addProtocol } from 'https://unpkg.com/maplibre-gl@6/dist/maplibre-gl.mjs';
+    import { Protocol } from 'https://esm.sh/pmtiles@4.3.0';
+
+    const protocol = new Protocol();
+    addProtocol('pmtiles', protocol.tile);
+
+    const importanceColors = [
+      [0, '#2166ac'],
+      [1.5, '#67a9cf'],
+      [2.5, '#fddbc7'],
+      [3.5, '#ef8a62'],
+      [5, '#b2182b']
+    ];
+
+    const map = new Map({
+      container: 'map',
+      hash: true,
+      style: {
+        version: 8,
+        glyphs: 'https://tile.openstreetmap.jp/fonts/{fontstack}/{range}.pbf',
+        sources: {
+          basemap: {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            maxzoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap contributors</a>'
+          },
+          stations: {
+            type: 'vector',
+            url: `pmtiles://${new URL('stations.pmtiles', window.location.href).href}`,
+            attribution: '<a href="https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-S12-2024.html" target="_blank">国土数値情報（駅別乗降客数データ）</a>'
+          }
+        },
+        layers: [
+          {
+            id: 'basemap',
+            type: 'raster',
+            source: 'basemap',
+            paint: {
+              'raster-opacity': 0.3
+            }
+          },
+          {
+            id: 'stations',
+            type: 'circle',
+            source: 'stations',
+            'source-layer': 'station',
+            paint: {
+              'circle-radius': 4,
+              'circle-color': ['interpolate', ['linear'], ['get', 'importance'], ...importanceColors.flat()],
+              'circle-stroke-color': '#222222',
+              'circle-stroke-width': 1
+            }
+          },
+          {
+            id: 'station-labels',
+            type: 'symbol',
+            source: 'stations',
+            'source-layer': 'station',
+            layout: {
+              'text-field': ['get', 'name'],
+              'text-font': ['Noto Sans JP Regular'],
+              'text-size': 12,
+              "text-variable-anchor": ["top", "left"],
+              "text-justify": "auto",
+              "text-radial-offset": 0.5,
+              'symbol-sort-key': ['*', -1, ['get', 'importance']]
+            },
+            paint: {
+              'text-color': '#222222',
+              'text-halo-color': '#ffffff',
+              'text-halo-width': 1.5
+            }
+          }
+        ]
+      },
+      center: [139.767125, 35.681236],
+      zoom: 4
+    });
+
+    map.addControl(new NavigationControl());
+
+    class LegendControl {
+      onAdd() {
+        this.container = document.createElement('div');
+        this.container.className = 'maplibregl-ctrl legend';
+
+        const title = document.createElement('div');
+        title.className = 'legend-title';
+        title.textContent = '重要度 (importance)';
+        this.container.append(title);
+
+        for (const [value, color] of [...importanceColors].reverse()) {
+          const item = document.createElement('div');
+          item.className = 'legend-item';
+          const swatch = document.createElement('span');
+          swatch.className = 'legend-swatch';
+          swatch.style.background = color;
+          const label = document.createElement('span');
+          label.textContent = String(value);
+          item.append(swatch, label);
+          this.container.append(item);
+        }
+        return this.container;
+      }
+
+      onRemove() {
+        this.container.remove();
+      }
+    }
+
+    map.addControl(new LegendControl(), 'bottom-right');
+    map.on('mouseenter', 'stations', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'stations', () => {
+      map.getCanvas().style.cursor = '';
+    });
+    map.on('click', 'stations', (event) => {
+      const feature = event.features?.[0];
+      if (!feature?.properties) return;
+
+      const table = document.createElement('table');
+      for (const [key, value] of Object.entries(feature.properties)) {
+        const row = document.createElement('tr');
+        const heading = document.createElement('th');
+        const cell = document.createElement('td');
+        heading.textContent = key;
+        cell.textContent = value == null
+          ? '—'
+          : typeof value === 'object'
+            ? JSON.stringify(value)
+            : String(value);
+        row.append(heading, cell);
+        table.append(row);
+      }
+
+      new Popup()
+        .setLngLat(event.lngLat)
+        .setDOMContent(table)
+        .addTo(map);
+    });
+  </script>
+</body>
+
+</html>
